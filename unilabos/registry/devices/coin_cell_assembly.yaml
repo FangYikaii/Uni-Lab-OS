@@ -1,0 +1,116 @@
+coin_cell_assembly_system:
+  description: DaLong heater stirrer
+  class:
+    module: unilabos.devices.coin_cell_assembly.coin_cell_assembly_system:Coin_Cell_Assembly
+    type: python
+    status_types:
+      sys_start_status: Bool
+      sys_stop_status: Bool
+      sys_reset_status: Bool
+      sys_hand_status: Bool
+      sys_auto_status: Bool
+      sys_init_status: Bool
+      request_rec_msg_status: Bool
+      request_send_msg_status: Bool
+      # warning_1: Bool
+      data_assembly_coin_cell_num: Int64
+      data_open_circuit_voltage: Float32
+      data_axis_x_pos: Float32
+      data_axis_y_pos: Float32
+      data_axis_z_pos: Float32
+      data_pole_weight: Float32
+      data_coin_cell_code: Int64
+      data_electrolyte_code: Int64
+      #data_stack_vision_code: Int64
+      #data_assembly_time: Int64
+      data_glove_box_pressure: Float32
+      data_glove_box_o2_content: Float32
+      data_glove_box_water_content: Float32
+      #data_material_inventory: Int64
+      #data_tips_inventory: Int64
+    action_value_mappings:
+      sys_start_cmd:
+        type: SendCmd
+        goal:
+          command: cmd
+        feedback: {}
+        result:
+          success: success
+      sys_stop_cmd:
+        type: SendCmd
+        goal:
+          command: cmd
+        feedback: { }
+        result:
+          success: success
+      sys_reset_cmd:
+        type: SendCmd
+        goal:
+          command: cmd
+        feedback: { }
+        result:
+          success: success
+      sys_hand_cmd:
+        type: SendCmd
+        goal:
+          command: cmd
+        feedback: { }
+        result:
+          success: success
+      sys_auto_cmd:
+        type: SendCmd
+        goal:
+          command: cmd
+        feedback: { }
+        result:
+          success: success
+      sys_init_cmd:
+        type: SendCmd
+        goal:
+          command: cmd
+        feedback: { }
+        result:
+          success: success
+      unilab_send_msg_succ_cmd:
+        type: SendCmd
+        goal:
+          command: cmd
+        feedback: { }
+        result:
+          success: success
+      unilab_rec_msg_succ_cmd:
+        type: SendCmd
+        goal:
+          command: cmd
+        feedback: { }
+        result:
+          success: success
+      unilab_send_msg_electrolyte_num:
+        type: SendCmd
+        goal:
+          command: num
+        feedback: { }
+        result:
+          success: success
+      unilab_send_msg_electrolyte_use_num:
+        type: SendCmd
+        goal:
+          command: use_num
+        feedback: { }
+        result:
+          success: success
+      unilab_send_msg_assembly_type:
+        type: SendCmd
+        goal:
+          command: num
+        feedback: { }
+        result:
+          success: success
+      unilab_send_msg_cmd:
+        type: SendCmd
+        goal:
+          command: experiment_params
+        feedback: { }
+        result:
+          success: success
+

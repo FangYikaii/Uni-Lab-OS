@@ -115,7 +115,7 @@ class BaseClient(UniversalDriver):
 
     @classmethod
     def load_csv(cls, file_path: str):
-        df = pd.read_csv(file_path)
+        df = pd.read_csv(file_path,encoding='gbk')
         df = df.drop_duplicates(subset='Name', keep='first') # FIXME: 重复的数据应该报错
         data_dict = df.set_index('Name').to_dict(orient='index')
         nodes = []
