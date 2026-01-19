@@ -85,6 +85,36 @@ class UDPClient:
         self.status_callback = None  # 状态更新回调函数
         self.listen_thread = None  # 状态监听线程
         self.listen_running = False  # 监听线程运行状态
+        
+        # 命令类型配置：立即响应/长时间运行
+        self._immediate_response_commands = {
+            "TOGGLE_LOCAL_REMOTE_CONTROL",
+            "GET_DEVICE_STATE",
+            "GET_REACTOR_STATE",
+            "GET_POST_PROCESS_STATE",
+            "REACTOR_N2_ON",
+            "REACTOR_N2_OFF",
+            "REACTOR_AIR_ON",
+            "REACTOR_AIR_OFF",
+            "TEMP_SET",
+            "START_STIR",
+            "STOP_STIR",
+            "POST_PROCESS_DISCHARGE_ON",
+            "POST_PROCESS_DISCHARGE_OFF"
+        }
+        
+        self._long_running_commands = {
+            "REACTOR_SOLUTION_ADD",
+            "POST_PROCESS_SOLUTION_ADD",
+            "POST_PROCESS_CLEAN",
+            "WAIT"
+        }
+        
+        # 任务管理相关属性
+        self.tasks = {}  # 任务ID到任务信息的映射
+        self.task_callbacks = {}  # 任务ID到回调函数的映射
+        self._task_counter = 0  # 任务计数器，用于生成唯一任务ID
+        self._task_lock = threading.Lock()  # 任务管理锁
     
     def connect(self) -> bool:
         """
@@ -152,6 +182,32 @@ class UDPClient:
                     response = json.loads(response_data.decode('utf-8'))
                     logger.debug(f"收到UDP状态更新: {response}")
                     
+                    # 检查是否包含任务ID
+                    task_id = response.get("task_id")
+                    
+                    if task_id:
+                        # 处理任务相关的状态更新
+                        task_status = response.get("status")
+                        task_data = response.get("data", {})
+                        
+                        logger.debug(f"收到任务更新: 任务ID={task_id}, 状态={task_status}, 数据={task_data}")
+                        
+                        # 更新任务状态
+                        with self._task_lock:
+                            if task_id in self.tasks:
+                                self.tasks[task_id]["status"] = task_status
+                                self.tasks[task_id]["data"] = task_data
+                                self.tasks[task_id]["updated_at"] = time.time()
+                        
+                        # 调用任务回调函数
+                        with self._task_lock:
+                            if task_id in self.task_callbacks:
+                                callback = self.task_callbacks[task_id]
+                                try:
+                                    callback(task_id, task_status, task_data)
+                                except Exception as e:
+                                    logger.error(f"任务回调执行失败: {e}")
+                    
                     # 如果是状态更新消息，调用回调函数
                     if response.get("type") == "status_update" and self.status_callback:
                         self.status_callback(response.get("data", {}))
@@ -181,10 +237,123 @@ class UDPClient:
                 self.socket = None
             self.connected = False
             logger.info("UDP客户端已断开连接")
+            
+            # 清空任务列表和回调
+            with self._task_lock:
+                self.tasks.clear()
+                self.task_callbacks.clear()
+            
             return True
         except Exception as e:
             logger.error(f"UDP客户端断开连接失败: {e}")
             return False
+    
+    def _generate_task_id(self) -> str:
+        """
+        生成唯一的任务ID
+        
+        Returns:
+            str: 唯一的任务ID
+        """
+        with self._task_lock:
+            self._task_counter += 1
+            return f"task_{self._task_counter}_{int(time.time() * 1000)}"
+    
+    def register_task(self, command: str, params: Dict[str, Any] = None) -> str:
+        """
+        注册一个新任务
+        
+        Args:
+            command: 命令名称
+            params: 命令参数
+            
+        Returns:
+            str: 任务ID
+        """
+        task_id = self._generate_task_id()
+        with self._task_lock:
+            self.tasks[task_id] = {
+                "command": command,
+                "params": params or {},
+                "status": "registered",
+                "created_at": time.time(),
+                "updated_at": time.time()
+            }
+        logger.debug(f"注册新任务: ID={task_id}, 命令={command}")
+        return task_id
+    
+    def set_task_callback(self, task_id: str, callback) -> bool:
+        """
+        设置任务的回调函数
+        
+        Args:
+            task_id: 任务ID
+            callback: 回调函数，格式: callback(task_id, status, data)
+            
+        Returns:
+            bool: 设置成功返回True，否则返回False
+        """
+        with self._task_lock:
+            if task_id in self.tasks:
+                self.task_callbacks[task_id] = callback
+                logger.debug(f"设置任务回调: ID={task_id}")
+                return True
+            else:
+                logger.error(f"任务不存在: ID={task_id}")
+                return False
+    
+    def get_task_status(self, task_id: str) -> Dict[str, Any]:
+        """
+        获取任务状态
+        
+        Args:
+            task_id: 任务ID
+            
+        Returns:
+            Dict[str, Any]: 任务状态信息
+        """
+        with self._task_lock:
+            return self.tasks.get(task_id, {})
+    
+    def get_all_tasks(self) -> Dict[str, Dict[str, Any]]:
+        """
+        获取所有任务信息
+        
+        Returns:
+            Dict[str, Dict[str, Any]]: 所有任务信息
+        """
+        with self._task_lock:
+            return self.tasks.copy()
+    
+    def clear_task(self, task_id: str) -> bool:
+        """
+        清除任务信息
+        
+        Args:
+            task_id: 任务ID
+            
+        Returns:
+            bool: 清除成功返回True，否则返回False
+        """
+        with self._task_lock:
+            if task_id in self.tasks:
+                del self.tasks[task_id]
+                if task_id in self.task_callbacks:
+                    del self.task_callbacks[task_id]
+                logger.debug(f"清除任务: ID={task_id}")
+                return True
+            else:
+                logger.error(f"任务不存在: ID={task_id}")
+                return False
+    
+    def clear_all_tasks(self) -> None:
+        """
+        清除所有任务信息
+        """
+        with self._task_lock:
+            self.tasks.clear()
+            self.task_callbacks.clear()
+            logger.debug("清除所有任务")
     
     def send_command(self, command: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         """
@@ -203,40 +372,88 @@ class UDPClient:
                 return {"status": "error", "message": "UDP客户端未连接"}
             
             try:
-                # 构建命令JSON
-                cmd_data = {
-                    "command": command,
-                    "params": params or {}
-                }
+                # 构建函数调用格式命令
+                params = params or {}
+                
+                # 处理参数，转换为函数调用格式
+                param_list = []
+                for key, value in params.items():
+                    # 处理反应器ID，转换为reactor_1格式
+                    if key == "reactor_id" or key == "post_process_id":
+                        param_list.append(f"{key[:-3]}_{value}")
+                    else:
+                        # 根据参数类型格式化
+                        if isinstance(value, str):
+                            param_list.append(value)
+                        else:
+                            param_list.append(str(value))
+                
+                # 构建命令字符串，格式：S COMMAND_NAME(param1,param2,...)
+                cmd_str = f"S {command}({','.join(param_list)})"
                 
                 # 发送命令
-                data = json.dumps(cmd_data).encode('utf-8')
+                data = cmd_str.encode('utf-8')
                 self.socket.sendto(data, (self.address, self.port))
-                logger.debug(f"发送UDP命令: {command}, 参数: {params}")
+                print(f"发送UDP命令: {cmd_str}, 目标地址: {self.address}:{self.port}")
+                logger.debug(f"发送UDP命令: {cmd_str}")
                 
-                try:
-                    # 接收响应 - 增加超时时间到2秒
-                    self.socket.settimeout(2.0)
-                    response_data, _ = self.socket.recvfrom(1024)
-                    response = json.loads(response_data.decode('utf-8'))
-                    logger.debug(f"收到UDP响应: {response}")
+                # 根据命令类型决定是否等待响应
+                if command in self._immediate_response_commands:
+                    # 立即响应命令，设置合理的超时时间
+                    try:
+                        self.socket.settimeout(5.0)
+                        response_data, _ = self.socket.recvfrom(1024)
+                        
+                        # 尝试解析响应，假设响应仍然是JSON格式
+                        try:
+                            response = json.loads(response_data.decode('utf-8'))
+                            logger.debug(f"收到UDP响应: {response}")
+                        except json.JSONDecodeError:
+                            # 如果响应不是JSON格式，返回成功状态
+                            response = {"status": "success", "message": "命令执行成功"}
+                            logger.debug(f"收到UDP响应: {response_data.decode('utf-8')}")
+                        
+                        # 恢复监听线程的超时时间
+                        self.socket.settimeout(2)
+                        return response
+                    except socket.timeout:
+                        logger.error(f"UDP命令超时: {command}")
+                        # 恢复监听线程的超时时间
+                        self.socket.settimeout(2)
+                        return {"status": "error", "message": "命令超时"}
+                elif command in self._long_running_commands:
+                    # 长时间运行命令，发送后立即返回成功，不等待响应
+                    # 服务器会通过状态更新推送执行结果
+                    logger.debug(f"长时间运行命令已发送，等待状态更新: {command}")
                     # 恢复监听线程的超时时间
-                    self.socket.settimeout(0.5)
-                    return response
-                except socket.timeout:
-                    logger.error(f"UDP命令超时: {command}")
-                    # 恢复监听线程的超时时间
-                    self.socket.settimeout(0.5)
-                    return {"status": "error", "message": "命令超时"}
-                except json.JSONDecodeError:
-                    logger.error(f"UDP响应格式错误: {command}")
-                    # 恢复监听线程的超时时间
-                    self.socket.settimeout(0.5)
-                    return {"status": "error", "message": "响应格式错误"}
+                    self.socket.settimeout(2)
+                    return {"status": "success", "message": "命令已接收，正在执行", "type": "async"}
+                else:
+                    # 未知命令类型，默认按立即响应处理
+                    try:
+                        self.socket.settimeout(2.0)
+                        response_data, _ = self.socket.recvfrom(1024)
+                        
+                        # 尝试解析响应
+                        try:
+                            response = json.loads(response_data.decode('utf-8'))
+                            logger.debug(f"收到UDP响应: {response}")
+                        except json.JSONDecodeError:
+                            response = {"status": "success", "message": "命令执行成功"}
+                            logger.debug(f"收到UDP响应: {response_data.decode('utf-8')}")
+                        
+                        # 恢复监听线程的超时时间
+                        self.socket.settimeout(2)
+                        return response
+                    except socket.timeout:
+                        logger.error(f"UDP命令超时: {command}")
+                        # 恢复监听线程的超时时间
+                        self.socket.settimeout(2)
+                        return {"status": "error", "message": "命令超时"}
             except Exception as e:
                 logger.error(f"UDP命令执行失败: {command}, 错误: {e}")
                 # 恢复监听线程的超时时间
-                self.socket.settimeout(0.5)
+                self.socket.settimeout(2)
                 return {"status": "error", "message": str(e)}
 
 
@@ -247,8 +464,8 @@ class ResinWorkstation(WorkstationBase):
     def __init__(self, 
         config: dict = None, 
         deck=None, 
-        address: str = "127.0.0.1",
-        port: int = 8888,
+        address: str = "192.168.3.207",
+        port: int = 8889,
         debug_mode: bool = False,
         *args,
         **kwargs):
@@ -360,11 +577,7 @@ class ResinWorkstation(WorkstationBase):
         
         Returns:
             DeviceState: 设备整体状态对象
-        """
-        # 如果是调试模式，直接返回当前状态
-        if self.debug_mode:
-            return self._device_state
-        
+        """        
         # 发送状态查询命令
         response = self.udp_client.send_command("GET_DEVICE_STATE")
         if response.get("status") == "success":
@@ -489,38 +702,93 @@ class ResinWorkstation(WorkstationBase):
         self.update_state(state_data)
 
     # ====================== 指令集实现 ======================
-    def _send_command(self, command: str, params: Dict[str, Any] = None) -> bool:
+    def _send_command(self, command: str, params: Dict[str, Any] = None, blocking: bool = False, timeout: float = None) -> bool:
         """
         发送命令的通用方法
         
         Args:
             command: 命令名称
             params: 命令参数
+            blocking: 是否阻塞等待命令完成，默认为False
+            timeout: 阻塞等待超时时间（秒），默认为None（无限等待）
             
         Returns:
             bool: 命令执行成功返回True，否则返回False
         """
-        if self.debug_mode:
-            logger.info(f"调试模式: 发送命令 {command}, 参数: {params}")
-            return True
-        
         if not self.connected:
             logger.error("设备未连接，无法发送命令")
             return False
         
         response = self.udp_client.send_command(command, params)
         
-        # 更新设备状态（无论命令是否成功，都更新状态）
-        self._get_device_state()
+        # 对于同步命令，等待并检查响应状态
+        if response.get("type") != "async":
+            # 更新设备状态（无论命令是否成功，都更新状态）
+            self._get_device_state()
+            
+            if response.get("status") == "success":
+                return True
+            else:
+                logger.error(f"命令执行失败: {command}, 错误: {response.get('message')}")
+                return False
         
-        if response.get("status") == "success":
+        # 对于异步命令
+        logger.info(f"异步命令已发送: {command}")
+        
+        if not blocking:
+            # 非阻塞模式，发送成功即返回True
             return True
-        else:
-            logger.error(f"命令执行失败: {command}, 错误: {response.get('message')}")
-            return False
+        
+        # 阻塞模式，等待命令完成
+        logger.info(f"阻塞等待命令完成: {command}")
+        
+        # 轮询设备状态，直到命令完成或超时
+        start_time = time.time()
+        while True:
+            # 检查是否超时
+            if timeout is not None and (time.time() - start_time) > timeout:
+                logger.error(f"命令执行超时: {command}")
+                return False
+            
+            # 更新设备状态
+            self._get_device_state()
+            
+            # 检查设备状态，判断命令是否完成
+            # 根据设备状态判断命令是否完成
+            device_status = self.device_status
+            
+            # 检查反应器状态
+            if command == "REACTOR_SOLUTION_ADD":
+                reactor_id = params.get("reactor_id")
+                if reactor_id is not None:
+                    reactor_state = device_status.get("reactors", {}).get(str(reactor_id), {})
+                    if reactor_state.get("status") == "idle":
+                        # 反应器状态为idle，命令可能已完成
+                        return True
+            
+            # 检查后处理系统状态
+            elif command in ["POST_PROCESS_SOLUTION_ADD", "POST_PROCESS_CLEAN"]:
+                post_process_state = device_status.get("post_processes", {}).get(str(params.get("post_process_id", 1)), {})
+                if post_process_state.get("status") == "idle":
+                    # 后处理系统状态为idle，命令可能已完成
+                    return True
+            
+            # 检查溶液添加状态
+            elif command == "REACTOR_SOLUTION_ADD":
+                if device_status.get("solution_add_status") == "idle":
+                    # 溶液添加状态为idle，命令可能已完成
+                    return True
+            
+            # 检查设备整体状态
+            if device_status.get("device_status") == "error":
+                logger.error(f"设备出错: {device_status.get('error_message')}")
+                return False
+            
+            # 短暂休眠，避免频繁查询
+            time.sleep(1.0)
 
     # ========== 移液操作指令集 ==========
-    def reactor_solution_add(self, solution_id: int, volume: float, reactor_id: int) -> bool:
+    def reactor_solution_add(self, solution_id: int, volume: float, reactor_id: int, blocking: bool = False, timeout: float = None) -> bool:
         """
         向反应器添加溶液
         
@@ -528,6 +796,8 @@ class ResinWorkstation(WorkstationBase):
             solution_id: 溶液编号
             volume: 加入体积
             reactor_id: 反应器编号
+            blocking: 是否阻塞等待命令完成，默认为False
+            timeout: 阻塞等待超时时间（秒），默认为None（无限等待）
             
         Returns:
             bool: 执行成功返回True，否则返回False
@@ -537,10 +807,10 @@ class ResinWorkstation(WorkstationBase):
             "volume": volume,
             "reactor_id": reactor_id
         }
-        return self._send_command("REACTOR_SOLUTION_ADD", params)
+        return self._send_command("REACTOR_SOLUTION_ADD", params, blocking=blocking, timeout=timeout)
 
     def post_process_solution_add(self, start_bottle: str, end_bottle: str, volume: float, 
-                                 inject_speed: float, suck_speed: float = 4.0) -> bool:
+                                 inject_speed: float, suck_speed: float = 4.0, blocking: bool = False, timeout: float = None) -> bool:
         """
         后处理溶液转移
         
@@ -550,6 +820,8 @@ class ResinWorkstation(WorkstationBase):
             volume: 加入体积
             inject_speed: 注入速度
             suck_speed: 吸入速度，默认4.0
+            blocking: 是否阻塞等待命令完成，默认为False
+            timeout: 阻塞等待超时时间（秒），默认为None（无限等待）
             
         Returns:
             bool: 执行成功返回True，否则返回False
@@ -561,14 +833,16 @@ class ResinWorkstation(WorkstationBase):
             "inject_speed": inject_speed,
             "suck_speed": suck_speed
         }
-        return self._send_command("POST_PROCESS_SOLUTION_ADD", params)
+        return self._send_command("POST_PROCESS_SOLUTION_ADD", params, blocking=blocking, timeout=timeout)
 
-    def post_process_clean(self, post_process_id: int) -> bool:
+    def post_process_clean(self, post_process_id: int, blocking: bool = False, timeout: float = None) -> bool:
         """
         自动清洗程序
         
         Args:
             post_process_id: 后处理编号
+            blocking: 是否阻塞等待命令完成，默认为False
+            timeout: 阻塞等待超时时间（秒），默认为None（无限等待）
             
         Returns:
             bool: 执行成功返回True，否则返回False
@@ -576,7 +850,7 @@ class ResinWorkstation(WorkstationBase):
         params = {
             "post_process_id": post_process_id
         }
-        return self._send_command("POST_PROCESS_CLEAN", params)
+        return self._send_command("POST_PROCESS_CLEAN", params, blocking=blocking, timeout=timeout)
 
     # ========== 反应器操作指令集 ==========
     def reactor_n2_on(self, reactor_id: int) -> bool:
@@ -721,23 +995,93 @@ class ResinWorkstation(WorkstationBase):
         return self._send_command("POST_PROCESS_DISCHARGE_OFF", params)
 
     # ========== 其他指令 ==========
-    def wait(self, seconds: int) -> bool:
+    def wait(self, seconds: int, blocking: bool = False, timeout: float = None) -> bool:
         """
         等待指定时间
         
         Args:
             seconds: 等待时间（秒）
+            blocking: 是否阻塞等待命令完成，默认为False
+            timeout: 阻塞等待超时时间（秒），默认为None（无限等待）
             
         Returns:
             bool: 执行成功返回True，否则返回False
         """
-        if self.debug_mode:
-            logger.info(f"调试模式: 等待 {seconds} 秒")
-        else:
-            time.sleep(seconds)
-        return True
+        params = {
+            "seconds": seconds
+        }
+        # 如果是wait命令，阻塞等待时间应该至少比seconds大
+        if blocking and timeout is None:
+            timeout = seconds + 10  # 增加10秒的缓冲时间
+        return self._send_command("WAIT", params, blocking=blocking, timeout=timeout)
 
     # ====================== 设备状态查询 ======================
+    # ====================== 任务管理方法 ======================
+    def register_task(self, command: str, params: Dict[str, Any] = None) -> str:
+        """
+        注册一个新任务
+        
+        Args:
+            command: 命令名称
+            params: 命令参数
+            
+        Returns:
+            str: 任务ID
+        """
+        return self.udp_client.register_task(command, params)
+    
+    def set_task_callback(self, task_id: str, callback) -> bool:
+        """
+        设置任务的回调函数
+        
+        Args:
+            task_id: 任务ID
+            callback: 回调函数，格式: callback(task_id, status, data)
+            
+        Returns:
+            bool: 设置成功返回True，否则返回False
+        """
+        return self.udp_client.set_task_callback(task_id, callback)
+    
+    def get_task_status(self, task_id: str) -> Dict[str, Any]:
+        """
+        获取任务状态
+        
+        Args:
+            task_id: 任务ID
+            
+        Returns:
+            Dict[str, Any]: 任务状态信息
+        """
+        return self.udp_client.get_task_status(task_id)
+    
+    def get_all_tasks(self) -> Dict[str, Dict[str, Any]]:
+        """
+        获取所有任务信息
+        
+        Returns:
+            Dict[str, Dict[str, Any]]: 所有任务信息
+        """
+        return self.udp_client.get_all_tasks()
+    
+    def clear_task(self, task_id: str) -> bool:
+        """
+        清除任务信息
+        
+        Args:
+            task_id: 任务ID
+            
+        Returns:
+            bool: 清除成功返回True，否则返回False
+        """
+        return self.udp_client.clear_task(task_id)
+    
+    def clear_all_tasks(self) -> None:
+        """
+        清除所有任务信息
+        """
+        self.udp_client.clear_all_tasks()
+    
     @property
     def device_status(self) -> Dict[str, Any]:
         """
