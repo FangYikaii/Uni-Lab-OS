@@ -109,12 +109,6 @@ class UDPClient:
             "POST_PROCESS_CLEAN",
             "WAIT"
         }
-        
-        # 任务管理相关属性
-        self.tasks = {}  # 任务ID到任务信息的映射
-        self.task_callbacks = {}  # 任务ID到回调函数的映射
-        self._task_counter = 0  # 任务计数器，用于生成唯一任务ID
-        self._task_lock = threading.Lock()  # 任务管理锁
     
     def connect(self) -> bool:
         """
@@ -182,32 +176,6 @@ class UDPClient:
                     response = json.loads(response_data.decode('utf-8'))
                     logger.debug(f"收到UDP状态更新: {response}")
                     
-                    # 检查是否包含任务ID
-                    task_id = response.get("task_id")
-                    
-                    if task_id:
-                        # 处理任务相关的状态更新
-                        task_status = response.get("status")
-                        task_data = response.get("data", {})
-                        
-                        logger.debug(f"收到任务更新: 任务ID={task_id}, 状态={task_status}, 数据={task_data}")
-                        
-                        # 更新任务状态
-                        with self._task_lock:
-                            if task_id in self.tasks:
-                                self.tasks[task_id]["status"] = task_status
-                                self.tasks[task_id]["data"] = task_data
-                                self.tasks[task_id]["updated_at"] = time.time()
-                        
-                        # 调用任务回调函数
-                        with self._task_lock:
-                            if task_id in self.task_callbacks:
-                                callback = self.task_callbacks[task_id]
-                                try:
-                                    callback(task_id, task_status, task_data)
-                                except Exception as e:
-                                    logger.error(f"任务回调执行失败: {e}")
-                    
                     # 如果是状态更新消息，调用回调函数
                     if response.get("type") == "status_update" and self.status_callback:
                         self.status_callback(response.get("data", {}))
@@ -238,122 +206,10 @@ class UDPClient:
             self.connected = False
             logger.info("UDP客户端已断开连接")
             
-            # 清空任务列表和回调
-            with self._task_lock:
-                self.tasks.clear()
-                self.task_callbacks.clear()
-            
             return True
         except Exception as e:
             logger.error(f"UDP客户端断开连接失败: {e}")
             return False
-    
-    def _generate_task_id(self) -> str:
-        """
-        生成唯一的任务ID
-        
-        Returns:
-            str: 唯一的任务ID
-        """
-        with self._task_lock:
-            self._task_counter += 1
-            return f"task_{self._task_counter}_{int(time.time() * 1000)}"
-    
-    def register_task(self, command: str, params: Dict[str, Any] = None) -> str:
-        """
-        注册一个新任务
-        
-        Args:
-            command: 命令名称
-            params: 命令参数
-            
-        Returns:
-            str: 任务ID
-        """
-        task_id = self._generate_task_id()
-        with self._task_lock:
-            self.tasks[task_id] = {
-                "command": command,
-                "params": params or {},
-                "status": "registered",
-                "created_at": time.time(),
-                "updated_at": time.time()
-            }
-        logger.debug(f"注册新任务: ID={task_id}, 命令={command}")
-        return task_id
-    
-    def set_task_callback(self, task_id: str, callback) -> bool:
-        """
-        设置任务的回调函数
-        
-        Args:
-            task_id: 任务ID
-            callback: 回调函数，格式: callback(task_id, status, data)
-            
-        Returns:
-            bool: 设置成功返回True，否则返回False
-        """
-        with self._task_lock:
-            if task_id in self.tasks:
-                self.task_callbacks[task_id] = callback
-                logger.debug(f"设置任务回调: ID={task_id}")
-                return True
-            else:
-                logger.error(f"任务不存在: ID={task_id}")
-                return False
-    
-    def get_task_status(self, task_id: str) -> Dict[str, Any]:
-        """
-        获取任务状态
-        
-        Args:
-            task_id: 任务ID
-            
-        Returns:
-            Dict[str, Any]: 任务状态信息
-        """
-        with self._task_lock:
-            return self.tasks.get(task_id, {})
-    
-    def get_all_tasks(self) -> Dict[str, Dict[str, Any]]:
-        """
-        获取所有任务信息
-        
-        Returns:
-            Dict[str, Dict[str, Any]]: 所有任务信息
-        """
-        with self._task_lock:
-            return self.tasks.copy()
-    
-    def clear_task(self, task_id: str) -> bool:
-        """
-        清除任务信息
-        
-        Args:
-            task_id: 任务ID
-            
-        Returns:
-            bool: 清除成功返回True，否则返回False
-        """
-        with self._task_lock:
-            if task_id in self.tasks:
-                del self.tasks[task_id]
-                if task_id in self.task_callbacks:
-                    del self.task_callbacks[task_id]
-                logger.debug(f"清除任务: ID={task_id}")
-                return True
-            else:
-                logger.error(f"任务不存在: ID={task_id}")
-                return False
-    
-    def clear_all_tasks(self) -> None:
-        """
-        清除所有任务信息
-        """
-        with self._task_lock:
-            self.tasks.clear()
-            self.task_callbacks.clear()
-            logger.debug("清除所有任务")
     
     def send_command(self, command: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         """
@@ -487,6 +343,9 @@ class ResinWorkstation(WorkstationBase):
         self._device_state = DeviceState()
         # 设置UDP客户端的状态更新回调
         self.udp_client.set_status_callback(self._handle_status_update)
+        # 初始化连接
+        self.connect_device(address, port)
+
 
     def post_init(self, ros_node: ROS2WorkstationNode):
         """
@@ -577,7 +436,7 @@ class ResinWorkstation(WorkstationBase):
         
         Returns:
             DeviceState: 设备整体状态对象
-        """        
+        """
         # 发送状态查询命令
         response = self.udp_client.send_command("GET_DEVICE_STATE")
         if response.get("status") == "success":
@@ -596,10 +455,6 @@ class ResinWorkstation(WorkstationBase):
         Returns:
             Optional[ReactorState]: 反应器状态对象，若不存在则返回None
         """
-        # 如果是调试模式，直接返回当前状态
-        if self.debug_mode:
-            return self._device_state.reactors.get(reactor_id)
-        
         # 发送反应器状态查询命令
         response = self.udp_client.send_command("GET_REACTOR_STATE", {"reactor_id": reactor_id})
         if response.get("status") == "success":
@@ -618,10 +473,6 @@ class ResinWorkstation(WorkstationBase):
         Returns:
             Optional[PostProcessState]: 后处理系统状态对象，若不存在则返回None
         """
-        # 如果是调试模式，直接返回当前状态
-        if self.debug_mode:
-            return self._device_state.post_processes.get(post_process_id)
-        
         # 发送后处理状态查询命令
         response = self.udp_client.send_command("GET_POST_PROCESS_STATE", {"post_process_id": post_process_id})
         if response.get("status") == "success":
@@ -1016,72 +867,6 @@ class ResinWorkstation(WorkstationBase):
         return self._send_command("WAIT", params, blocking=blocking, timeout=timeout)
 
     # ====================== 设备状态查询 ======================
-    # ====================== 任务管理方法 ======================
-    def register_task(self, command: str, params: Dict[str, Any] = None) -> str:
-        """
-        注册一个新任务
-        
-        Args:
-            command: 命令名称
-            params: 命令参数
-            
-        Returns:
-            str: 任务ID
-        """
-        return self.udp_client.register_task(command, params)
-    
-    def set_task_callback(self, task_id: str, callback) -> bool:
-        """
-        设置任务的回调函数
-        
-        Args:
-            task_id: 任务ID
-            callback: 回调函数，格式: callback(task_id, status, data)
-            
-        Returns:
-            bool: 设置成功返回True，否则返回False
-        """
-        return self.udp_client.set_task_callback(task_id, callback)
-    
-    def get_task_status(self, task_id: str) -> Dict[str, Any]:
-        """
-        获取任务状态
-        
-        Args:
-            task_id: 任务ID
-            
-        Returns:
-            Dict[str, Any]: 任务状态信息
-        """
-        return self.udp_client.get_task_status(task_id)
-    
-    def get_all_tasks(self) -> Dict[str, Dict[str, Any]]:
-        """
-        获取所有任务信息
-        
-        Returns:
-            Dict[str, Dict[str, Any]]: 所有任务信息
-        """
-        return self.udp_client.get_all_tasks()
-    
-    def clear_task(self, task_id: str) -> bool:
-        """
-        清除任务信息
-        
-        Args:
-            task_id: 任务ID
-            
-        Returns:
-            bool: 清除成功返回True，否则返回False
-        """
-        return self.udp_client.clear_task(task_id)
-    
-    def clear_all_tasks(self) -> None:
-        """
-        清除所有任务信息
-        """
-        self.udp_client.clear_all_tasks()
-    
     @property
     def device_status(self) -> Dict[str, Any]:
         """

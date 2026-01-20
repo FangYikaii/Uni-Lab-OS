@@ -3,50 +3,6 @@ resinworkstation_device:
   - resin_workstation
   class:
     action_value_mappings:
-      auto-clear_all_tasks:
-        feedback: {}
-        goal: {}
-        goal_default: {}
-        handles: {}
-        result: {}
-        schema:
-          description: ''
-          properties:
-            feedback: {}
-            goal:
-              properties: {}
-              required: []
-              type: object
-            result: {}
-          required:
-          - goal
-          title: clear_all_tasks参数
-          type: object
-        type: UniLabJsonCommand
-      auto-clear_task:
-        feedback: {}
-        goal: {}
-        goal_default:
-          task_id: null
-        handles: {}
-        result: {}
-        schema:
-          description: ''
-          properties:
-            feedback: {}
-            goal:
-              properties:
-                task_id:
-                  type: string
-              required:
-              - task_id
-              type: object
-            result: {}
-          required:
-          - goal
-          title: clear_task参数
-          type: object
-        type: UniLabJsonCommand
       auto-connect_device:
         feedback: {}
         goal: {}
@@ -378,61 +334,6 @@ resinworkstation_device:
           title: reactor_solution_add参数
           type: object
         type: UniLabJsonCommand
-      auto-register_task:
-        feedback: {}
-        goal: {}
-        goal_default:
-          command: null
-          params: null
-        handles: {}
-        result: {}
-        schema:
-          description: ''
-          properties:
-            feedback: {}
-            goal:
-              properties:
-                command:
-                  type: string
-                params:
-                  type: object
-              required:
-              - command
-              type: object
-            result: {}
-          required:
-          - goal
-          title: register_task参数
-          type: object
-        type: UniLabJsonCommand
-      auto-set_task_callback:
-        feedback: {}
-        goal: {}
-        goal_default:
-          callback: null
-          task_id: null
-        handles: {}
-        result: {}
-        schema:
-          description: ''
-          properties:
-            feedback: {}
-            goal:
-              properties:
-                callback:
-                  type: string
-                task_id:
-                  type: string
-              required:
-              - task_id
-              - callback
-              type: object
-            result: {}
-          required:
-          - goal
-          title: set_task_callback参数
-          type: object
-        type: UniLabJsonCommand
       auto-start_reactor_stirrer:
         feedback: {}
         goal: {}
@@ -594,9 +495,7 @@ resinworkstation_device:
         type: UniLabJsonCommand
     module: unilabos.devices.workstation.resin_workstation.resin_workstation:ResinWorkstation
     status_types:
-      all_tasks: dict
       device_status: dict
-      task_status: dict
     type: python
   config_info: []
   description: ''
@@ -622,15 +521,9 @@ resinworkstation_device:
       type: object
     data:
       properties:
-        all_tasks:
-          type: object
         device_status:
           type: object
-        task_status:
-          type: object
       required:
-      - task_status
-      - all_tasks
       - device_status
       type: object
   registry_type: device

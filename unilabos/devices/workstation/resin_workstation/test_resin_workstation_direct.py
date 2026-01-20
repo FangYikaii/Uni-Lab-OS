@@ -41,9 +41,12 @@ def should_continue_test(test_name):
 def main():
     """
     主测试函数
+    
+    基于新的代码逻辑（删除了任务管理功能）优化的测试脚本
     """
     print("=" * 70)
     print("ResinWorkstation 直接测试脚本")
+    print("基于新逻辑优化版 - 删除了任务管理功能测试")
     print("=" * 70)
     
     # 测试配置
@@ -64,26 +67,37 @@ def main():
     test_results.append(print_test_result("初始化ResinWorkstation", True))
     test_results.append(print_test_result("检查初始连接状态", not workstation.connected))
     test_results.append(print_test_result("检查初始操作模式", workstation.operation_mode == "local"))
+        
+    # 获取反应器状态
+    print("\n3. 反应器状态测试...")
+    if should_continue_test("获取反应器状态"):
+        reactor_status = workstation._get_reactor_state(reactor_id=1)
+        test_results.append(print_test_result("获取反应器状态", reactor_status is not None))
+        if reactor_status:
+            print(f"   反应器1温度: {reactor_status.current_temperature}°C")
+            print(f"   反应器1搅拌状态: {'运行中' if reactor_status.stirring_status else '已停止'}")
     
-    # 测试连接设备
-    print("\n2. 连接设备测试...")
-    connect_result = workstation.connect_device()
-    test_results.append(print_test_result("连接设备", connect_result))
-    if connect_result:
-        test_results.append(print_test_result("检查连接状态", workstation.connected))
-    
+    # 获取后处理状态
+    print("\n4. 后处理状态测试...")
+    if should_continue_test("获取后处理状态"):
+        post_process_status = workstation._get_post_process_state(post_process_id=1)
+        test_results.append(print_test_result("获取后处理状态", post_process_status is not None))
+        if post_process_status:
+            print(f"   后处理1状态: {post_process_status.status}")
+            print(f"   后处理1清洗状态: {'清洗中' if post_process_status.cleaning_status else '未清洗'}")
+
     # 测试设备状态查询
-    print("\n3. 设备状态测试...")
+    print("\n5. 设备状态测试...")
     if should_continue_test("获取设备状态"):
         status = workstation.device_status
         test_results.append(print_test_result("获取设备状态", status is not None))
         if status:
-            print(f"   设备状态: {status['status']}")
-            print(f"   连接状态: {status['connected']}")
-            print(f"   操作模式: {status['operation_mode']}")
+            print(f"   设备状态: {status.get('status', '未知')}")
+            print(f"   连接状态: {status.get('connected', False)}")
+            print(f"   操作模式: {status.get('operation_mode', '未知')}")
     
     # 测试切换本地/远程控制模式
-    print("\n4. 控制模式切换测试...")
+    print("\n6. 控制模式切换测试...")
     if workstation.connected:
         if should_continue_test("切换到远程模式"):
             remote_result = workstation.toggle_local_remote_control("remote")
@@ -98,7 +112,7 @@ def main():
                 test_results.append(print_test_result("检查本地模式", workstation.operation_mode == "local"))
     
     # 测试反应器操作测试
-    print("\n5. 反应器操作测试...")
+    print("\n7. 反应器操作测试...")
     
     # 测试反应器溶液添加
     if workstation.connected: 
@@ -143,7 +157,7 @@ def main():
         test_results.append(print_test_result("停止搅拌器", stop_stir_result))
     
     # 测试后处理系统
-    print("\n6. 后处理系统测试...")
+    print("\n8. 后处理系统测试...")
     
     # 后处理溶液转移
     if workstation.connected and should_continue_test("后处理溶液转移"):
@@ -171,10 +185,18 @@ def main():
         test_results.append(print_test_result("关闭后处理排液", discharge_off_result))
     
     # 测试等待功能
-    print("\n7. 等待功能测试...")
+    print("\n9. 等待功能测试...")
     if workstation.connected and should_continue_test("等待1秒"):
         wait_result = workstation.wait(seconds=1)
         test_results.append(print_test_result("等待1秒", wait_result))
+    
+    # 测试设备断开连接
+    print("\n10. 设备断开测试...")
+    if workstation.connected and should_continue_test("断开设备连接"):
+        disconnect_result = workstation.disconnect_device()
+        test_results.append(print_test_result("断开设备连接", disconnect_result))
+        if disconnect_result:
+            test_results.append(print_test_result("检查断开状态", not workstation.connected))
      
     total_tests = len(test_results)
     passed_tests = sum(1 for result in test_results if result)
