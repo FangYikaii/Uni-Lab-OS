@@ -1,0 +1,12 @@
+ReagentRack:
+  category:
+  - racks
+  - reagent_racks
+  class:
+    module: unilabos.resources.resin_workstation.racks:ReagentRack
+    type: pylabrobot
+  description: 树脂工作站试剂架
+  handles: []
+  icon: ''
+  init_param_schema: {}
+  version: 1.0.0

@@ -255,8 +255,27 @@ def main():
         wait_result = workstation.wait(seconds=1, blocking=True, timeout=5)
         test_results.append(print_test_result("等待1秒（阻塞）", wait_result))
     
+    # 测试试剂管理功能
+    print("\n10. 试剂管理测试...")
+    
+    if workstation.connected and should_continue_test("获取单个试剂信息"):
+        reagent_info = workstation.get_reagent_info(reagent_id=1)
+        test_results.append(print_test_result("获取单个试剂信息", reagent_info is not None))
+        if reagent_info:
+            print(f"   试剂ID: {reagent_info.get('reagent_id')}")
+            print(f"   试剂名称: {reagent_info.get('name')}")
+            print(f"   试剂体积: {reagent_info.get('volume')}{reagent_info.get('unit', 'ml')}")
+    
+    if workstation.connected and should_continue_test("获取所有试剂信息"):
+        all_reagents_info = workstation.get_all_reagents_info()
+        test_results.append(print_test_result("获取所有试剂信息", all_reagents_info is not None and len(all_reagents_info) > 0))
+        if all_reagents_info:
+            print(f"   试剂数量: {len(all_reagents_info)}")
+            for reagent_id, reagent_info in all_reagents_info.items():
+                print(f"   试剂 {reagent_id}: {reagent_info.get('name')} - {reagent_info.get('volume')}ml")
+    
     # 测试设备断开连接
-    print("\n10. 设备断开测试...")
+    print("\n11. 设备断开测试...")
     if workstation.connected and should_continue_test("断开设备连接"):
         disconnect_result = workstation.disconnect_device()
         test_results.append(print_test_result("断开设备连接", disconnect_result))

@@ -2,14 +2,19 @@ import json
 import socket
 import threading
 import time
-from typing import Any, Dict, Optional, List
 from dataclasses import dataclass, asdict
-from functools import wraps
+from typing import Any, Dict, Optional
 
-from pylabrobot.resources import Deck, Resource as PLRResource
 from unilabos.devices.workstation.workstation_base import WorkstationBase
 from unilabos.ros.nodes.presets.workstation import ROS2WorkstationNode
 from unilabos.utils.log import logger
+
+from unilabos.resources.resin_workstation import (
+    ReagentState,
+    ResinWorkstationDeck,
+    ReagentBottle,
+    ReagentRack
+)
 
 
 @dataclass
@@ -55,6 +60,7 @@ class DeviceState:
     device_status: str = "idle"  # 设备状态：idle, running, error
     reactors: Dict[int, ReactorState] = None  # 反应器状态字典
     post_processes: Dict[int, PostProcessState] = None  # 后处理系统状态字典
+    reagents: Dict[int, ReagentState] = None  # 试剂状态字典
     last_updated: str = ""  # 最后更新时间
     error_message: str = ""  # 设备级错误信息
     solution_add_status: str = "idle"  # 溶液添加状态：idle, running, error
@@ -68,6 +74,8 @@ class DeviceState:
             self.reactors = {}
         if self.post_processes is None:
             self.post_processes = {}
+        if self.reagents is None:
+            self.reagents = {}
         self.last_updated = time.strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -92,6 +100,8 @@ class UDPClient:
             "GET_DEVICE_STATE",
             "GET_REACTOR_STATE",
             "GET_POST_PROCESS_STATE",
+            "GET_REAGENT_STATE",
+            "GET_ALL_REAGENTS_STATE",
             "REACTOR_N2_ON",
             "REACTOR_N2_OFF",
             "REACTOR_AIR_ON",
@@ -107,7 +117,8 @@ class UDPClient:
             "REACTOR_SOLUTION_ADD",
             "POST_PROCESS_SOLUTION_ADD",
             "POST_PROCESS_CLEAN",
-            "WAIT"
+            "WAIT",
+            "UPDATE_REAGENT_VOLUME"
         }
     
     def connect(self) -> bool:
@@ -316,17 +327,25 @@ class ResinWorkstation(WorkstationBase):
     """
     Resin工作站驱动类
     """
-    def __init__(self, 
-        config: dict = None, 
-        deck=None, 
-        address: str = "192.168.3.207",
-        port: int = 8889,
-        debug_mode: bool = False,
-        *args,
-        **kwargs):
+    def __init__(self, config: dict = None, deck=None, address: str = "127.0.0.1",
+                 port: int = 8889, debug_mode: bool = False, *args, **kwargs):
+        if deck is None:
+            if config and 'deck' in config:
+                deck = config.get('deck')
+            else:
+                # 创建默认的树脂工作站台面
+                deck = ResinWorkstationDeck()
+                # 初始化试剂架
+                deck.initialize_reagent_racks()
+        else:
+            # 如果提供了deck，确保试剂架已经初始化
+            if isinstance(deck, ResinWorkstationDeck):
+                if not deck.reaction_reagent_rack or not deck.post_process_reagent_rack:
+                    logger.info("提供的deck对象试剂架未初始化，正在初始化...")
+                    deck.initialize_reagent_racks()
+            else:
+                logger.warning(f"提供的deck对象不是ResinWorkstationDeck类型: {type(deck)}, 无法初始化试剂架")
         
-        if deck is None and config:
-            deck = config.get('deck')
         super().__init__(deck=deck, *args, **kwargs)
         self.debug_mode = debug_mode
 
@@ -344,19 +363,240 @@ class ResinWorkstation(WorkstationBase):
         self.udp_client.set_status_callback(self._handle_status_update)
         # 初始化连接
         self.connect_device(address, port)
+        
+        # 初始化物料对象映射
+        self._reagent_bottles = {}
+        # 同步初始状态
+        self._sync_state_to_material_objects()
+        
+        logger.info("树脂工作站初始化完成")
 
-
-    def post_init(self, ros_node: ROS2WorkstationNode):
+    def _sync_state_to_material_objects(self):
         """
-        初始化后设置
+        将设备状态同步到物料对象
+        """
+        if not self.deck:
+            logger.error("Deck未初始化，无法同步物料状态")
+            return
+        
+        # 遍历所有试剂状态，创建或更新试剂瓶对象
+        for reagent_id, reagent_state_data in self._device_state.reagents.items():
+            # 检查试剂瓶是否已存在
+            if reagent_id not in self._reagent_bottles:
+                # 创建新的试剂瓶对象
+                reagent_bottle = ReagentBottle(
+                    name=f"reagent_bottle_{reagent_id}",
+                    size_x=50.0,
+                    size_y=50.0,
+                    size_z=100.0,
+                    reagent_state=ReagentState(**reagent_state_data)
+                )
+                
+                # 根据试剂类别选择对应的试剂架
+                category = reagent_state_data.get("category", "reaction")
+                rack_name = "reaction_reagent_rack" if category == "reaction" else "post_process_reagent_rack"
+                reagent_rack = getattr(self.deck, rack_name, None)
+                
+                if not reagent_rack:
+                    logger.error(f"试剂架 {rack_name} 不存在，无法分配试剂瓶")
+                    continue
+                
+                # 寻找空槽位
+                assigned = False
+                for row in range(reagent_rack.num_rows):
+                    for col in range(reagent_rack.num_cols):
+                        if not reagent_rack.get_bottle_by_position(row, col):
+                            success = reagent_rack.assign_bottle(reagent_bottle, row, col)
+                            if success:
+                                logger.info(f"试剂瓶 {reagent_id} 已分配到 {rack_name}({row}, {col})")
+                                assigned = True
+                                break
+                    if assigned:
+                        break
+                
+                if not assigned:
+                    logger.error(f"试剂架 {rack_name} 已满，无法分配试剂瓶 {reagent_id}")
+                    continue
+                
+                # 添加到映射
+                self._reagent_bottles[reagent_id] = reagent_bottle
+                logger.info(f"试剂瓶 {reagent_id} 已成功创建并分配")
+            else:
+                # 更新现有试剂瓶的状态
+                reagent_bottle = self._reagent_bottles[reagent_id]
+                old_category = reagent_bottle._unilabos_state.category
+                new_category = reagent_state_data.get("category", "reaction")
+                
+                # 加载新状态
+                reagent_bottle.load_state(reagent_state_data)
+                logger.debug(f"试剂瓶 {reagent_id} 状态已更新")
+                
+                # 如果类别发生变化，需要重新分配试剂架
+                if old_category != new_category:
+                    logger.info(f"试剂 {reagent_id} 类别变化: {old_category} -> {new_category}，重新分配试剂架")
+                    # 从旧试剂架中移除
+                    self._remove_reagent_bottle_from_rack(reagent_bottle, old_category)
+                    # 分配到新试剂架
+                    self._assign_reagent_bottle_to_rack(reagent_bottle, new_category)
+        
+        # 2. 清理不再存在于设备状态中的试剂瓶对象
+        current_reagent_ids = set(self._device_state.reagents.keys())
+        existing_bottle_ids = set(self._reagent_bottles.keys())
+        
+        # 找出需要移除的试剂瓶ID
+        reagent_ids_to_remove = existing_bottle_ids - current_reagent_ids
+        
+        for reagent_id in reagent_ids_to_remove:
+            reagent_bottle = self._reagent_bottles[reagent_id]
+            # 从试剂架中移除试剂瓶
+            self._remove_reagent_bottle_from_rack(reagent_bottle)
+            # 从映射中移除
+            del self._reagent_bottles[reagent_id]
+            logger.info(f"移除试剂瓶对象: {reagent_id}")
+        
+        # 3. 更新ROS资源
+        if hasattr(self, '_ros_node'):
+            ROS2WorkstationNode.run_async_func(self._ros_node.update_resource, True, **{
+                "resources": [self.deck]
+            })
+    
+    def _assign_reagent_bottle_to_rack(self, reagent_bottle, category):
+        """
+        将试剂瓶分配到相应的试剂架
         
         Args:
-            ros_node: ROS节点实例
+            reagent_bottle: 试剂瓶对象
+            category: 试剂类别
         """
-        self._ros_node = ros_node
-        ROS2WorkstationNode.run_async_func(self._ros_node.update_resource, True, **{
-            "resources": [self.deck]
-        })
+        rack_name = "reaction_reagent_rack" if category == "reaction" else "post_process_reagent_rack"
+        reagent_rack = getattr(self.deck, rack_name, None)
+        
+        if not reagent_rack:
+            logger.error(f"试剂架 {rack_name} 不存在，无法分配试剂瓶")
+            return False
+        
+        # 寻找空槽位
+        assigned = False
+        for row in range(reagent_rack.num_rows):
+            for col in range(reagent_rack.num_cols):
+                if not reagent_rack.get_bottle_by_position(row, col):
+                    success = reagent_rack.assign_bottle(reagent_bottle, row, col)
+                    if success:
+                        logger.info(f"试剂瓶 {reagent_bottle._unilabos_state.reagent_id} 已重新分配到 {rack_name}({row}, {col})")
+                        assigned = True
+                        break
+            if assigned:
+                break
+        
+        if not assigned:
+            logger.error(f"试剂架 {rack_name} 已满，无法重新分配试剂瓶 {reagent_bottle._unilabos_state.reagent_id}")
+            return False
+        
+        return True
+    
+    def _remove_reagent_bottle_from_rack(self, reagent_bottle, category=None):
+        """
+        从试剂架中移除试剂瓶
+        
+        Args:
+            reagent_bottle: 试剂瓶对象
+            category: 试剂类别（可选，用于指定试剂架）
+        """
+        # 如果没有指定类别，使用当前试剂瓶的类别
+        if not category:
+            category = reagent_bottle._unilabos_state.category
+        
+        # 确定要检查的试剂架
+        rack_names = []
+        if category:
+            rack_names = ["reaction_reagent_rack" if category == "reaction" else "post_process_reagent_rack"]
+        else:
+            rack_names = ["reaction_reagent_rack", "post_process_reagent_rack"]
+        
+        for rack_name in rack_names:
+            reagent_rack = getattr(self.deck, rack_name, None)
+            if not reagent_rack:
+                continue
+            
+            # 在试剂架中查找试剂瓶并移除
+            for row in range(reagent_rack.num_rows):
+                for col in range(reagent_rack.num_cols):
+                    bottle = reagent_rack.get_bottle_by_position(row, col)
+                    if bottle == reagent_bottle:
+                        removed_bottle = reagent_rack.remove_bottle(row, col)
+                        if removed_bottle:
+                            logger.info(f"从试剂架 {rack_name}({row}, {col}) 移除试剂瓶 {reagent_bottle._unilabos_state.reagent_id}")
+                        return
+    
+    def get_reagent_bottle(self, reagent_id: int) -> Optional[ReagentBottle]:
+        """
+        通过试剂ID获取试剂瓶对象
+        
+        Args:
+            reagent_id: 试剂ID
+            
+        Returns:
+            Optional[ReagentBottle]: 试剂瓶对象，若不存在则返回None
+        """
+        reagent_bottle = self._reagent_bottles.get(reagent_id)
+        if not reagent_bottle:
+            logger.debug(f"未找到试剂瓶对象: {reagent_id}")
+        return reagent_bottle
+    
+    def get_reagent_bottle_by_position(self, rack_name: str, row: int, col: int) -> Optional[ReagentBottle]:
+        """
+        通过位置获取试剂瓶对象
+        
+        Args:
+            rack_name: 试剂架名称 (reaction_reagent_rack 或 post_process_reagent_rack)
+            row: 行号
+            col: 列号
+            
+        Returns:
+            Optional[ReagentBottle]: 试剂瓶对象，若不存在则返回None
+        """
+        if not self.deck:
+            logger.error("Deck未初始化，无法获取试剂瓶对象")
+            return None
+        
+        reagent_rack = getattr(self.deck, rack_name, None)
+        if not reagent_rack:
+            logger.error(f"试剂架 {rack_name} 不存在")
+            return None
+        
+        # 验证行号和列号
+        if not isinstance(row, int) or not isinstance(col, int):
+            logger.error(f"无效的行号或列号类型: row={type(row)}, col={type(col)}")
+            return None
+        
+        if row < 0 or row >= reagent_rack.num_rows or col < 0 or col >= reagent_rack.num_cols:
+            logger.error(f"无效的试剂架位置: ({row}, {col}), 试剂架大小: {reagent_rack.num_rows}x{reagent_rack.num_cols}")
+            return None
+        
+        reagent_bottle = reagent_rack.get_bottle_by_position(row, col)
+        if not reagent_bottle:
+            logger.debug(f"试剂架 {rack_name} 位置 ({row}, {col}) 没有试剂瓶")
+        
+        return reagent_bottle
+    
+    def get_reagent_rack(self, rack_name: str) -> Optional[ReagentRack]:
+        """
+        获取试剂架对象
+        
+        Args:
+            rack_name: 试剂架名称 (reaction_reagent_rack 或 post_process_reagent_rack)
+            
+        Returns:
+            Optional[ReagentRack]: 试剂架对象，若不存在则返回None
+        """
+        if not self.deck:
+            logger.error("Deck未初始化，无法获取试剂架对象")
+            return None
+        
+        reagent_rack = getattr(self.deck, rack_name, None)
+        if not reagent_rack:
+            logger.error(f"试剂架 {rack_name} 不存在")
+        return reagent_rack
 
     # ====================== 设备连接管理 ======================
     def connect_device(self, address: str = None, port: int = None) -> bool:
@@ -443,6 +683,39 @@ class ResinWorkstation(WorkstationBase):
             self.update_state(response.get("data", {}))
         
         return self._device_state
+    
+    def _get_reagent_state(self, reagent_id: int) -> Optional[ReagentState]:
+        """
+        获取单个试剂状态
+        
+        Args:
+            reagent_id: 试剂编号
+            
+        Returns:
+            Optional[ReagentState]: 试剂状态对象，若不存在则返回None
+        """
+        # 发送试剂状态查询命令
+        response = self.udp_client.send_command("GET_REAGENT_STATE", {"reagent_id": reagent_id})
+        if response.get("status") == "success":
+            # 更新试剂状态
+            self.update_state({"reagents": {reagent_id: response.get("data", {})}})
+        
+        return self._device_state.reagents.get(reagent_id)
+    
+    def _get_all_reagents_state(self) -> Dict[int, ReagentState]:
+        """
+        获取所有试剂状态
+        
+        Returns:
+            Dict[int, ReagentState]: 所有试剂状态字典
+        """
+        # 发送所有试剂状态查询命令
+        response = self.udp_client.send_command("GET_ALL_REAGENTS_STATE")
+        if response.get("status") == "success":
+            # 更新所有试剂状态
+            self.update_state({"reagents": response.get("data", {})})
+        
+        return self._device_state.reagents
     
     def _get_reactor_state(self, reactor_id: int) -> Optional[ReactorState]:
         """
@@ -538,9 +811,32 @@ class ResinWorkstation(WorkstationBase):
                     if hasattr(post_process, key):
                         setattr(post_process, key, value)
         
+        # 更新试剂状态
+        if "reagents" in state_data:
+            for reagent_id, reagent_state_data in state_data["reagents"].items():
+                reagent_id = int(reagent_id)
+                # 如果试剂不存在，创建新的ReagentState对象
+                if reagent_id not in self._device_state.reagents:
+                    self._device_state.reagents[reagent_id] = ReagentState(
+                        reagent_id=reagent_id,
+                        name=reagent_state_data.get("name", ""),
+                        volume=reagent_state_data.get("volume", 0.0),
+                        max_volume=reagent_state_data.get("max_volume", 0.0),
+                        concentration=reagent_state_data.get("concentration", "")
+                    )
+                
+                # 更新试剂状态属性
+                reagent = self._device_state.reagents[reagent_id]
+                for key, value in reagent_state_data.items():
+                    if hasattr(reagent, key):
+                        setattr(reagent, key, value)
+        
         # 更新最后更新时间
         self._device_state.last_updated = time.strftime("%Y-%m-%d %H:%M:%S")
         logger.debug(f"设备状态已更新: {self._device_state}")
+        
+        # 同步更新物料对象
+        self._sync_state_to_material_objects()
     
     def _handle_status_update(self, state_data: Dict[str, Any]) -> None:
         """
@@ -627,6 +923,208 @@ class ResinWorkstation(WorkstationBase):
             
             # 短暂休眠，避免频繁查询
             time.sleep(1.0)
+    
+    # ========== 试剂操作指令集 ==========
+    def update_reagent_volume(self, reagent_id: int, volume_change: float, blocking: bool = False, timeout: float = None) -> bool:
+        """
+        更新试剂体积
+        
+        Args:
+            reagent_id: 试剂编号
+            volume_change: 体积变化量（正数为增加，负数为减少）
+            blocking: 是否阻塞等待命令完成，默认为False
+            timeout: 阻塞等待超时时间（秒），默认为None（无限等待）
+            
+        Returns:
+            bool: 操作成功返回True，否则返回False
+        """
+        if not self.connected:
+            logger.error("设备未连接，无法更新试剂体积")
+            return False
+        
+        # 先获取试剂瓶对象
+        reagent_bottle = self.get_reagent_bottle(reagent_id)
+        local_success = True
+        
+        if reagent_bottle:
+            # 直接操作试剂瓶对象
+            if volume_change > 0:
+                local_success = reagent_bottle.add_reagent(volume_change)
+            else:
+                local_success = reagent_bottle.remove_reagent(abs(volume_change))
+            
+            if local_success:
+                logger.info(f"试剂 {reagent_id} 体积已更新，变化量: {volume_change}")
+                
+                # 同步更新设备状态中的试剂状态
+                if reagent_id in self._device_state.reagents:
+                    self._device_state.reagents[reagent_id].volume = reagent_bottle._unilabos_state.volume
+                    self._device_state.reagents[reagent_id].status = reagent_bottle._unilabos_state.status
+                    logger.debug(f"已同步更新设备状态中的试剂 {reagent_id} 体积和状态")
+            else:
+                logger.error(f"无法更新试剂 {reagent_id} 体积，变化量: {volume_change}")
+        else:
+            logger.error(f"未找到试剂瓶对象: {reagent_id}")
+            local_success = False
+        
+        # 发送命令到设备
+        params = {
+            "reagent_id": reagent_id,
+            "volume_change": volume_change
+        }
+        
+        device_success = self._send_command("UPDATE_REAGENT_VOLUME", params, blocking=blocking, timeout=timeout)
+        
+        # 如果设备命令成功，但本地更新失败，重新同步状态
+        if device_success and not local_success:
+            logger.info(f"设备更新试剂 {reagent_id} 体积成功，正在重新同步状态")
+            self._get_reagent_state(reagent_id)
+        
+        return local_success and device_success
+    
+    def transfer_reagent_bottle(self, reagent_id: int, from_rack: str, from_row: int, from_col: int, 
+                               to_rack: str, to_row: int, to_col: int) -> bool:
+        """
+        转移试剂瓶从一个试剂架到另一个试剂架
+        
+        Args:
+            reagent_id: 试剂ID
+            from_rack: 源试剂架名称
+            from_row: 源行号
+            from_col: 源列号
+            to_rack: 目标试剂架名称
+            to_row: 目标行号
+            to_col: 目标列号
+            
+        Returns:
+            bool: 转移成功返回True，否则返回False
+        """
+        logger.info(f"开始转移试剂瓶 {reagent_id} 从 {from_rack}({from_row}, {from_col}) 到 {to_rack}({to_row}, {to_col})")
+        
+        # 获取源试剂架和目标试剂架
+        source_rack = self.get_reagent_rack(from_rack)
+        target_rack = self.get_reagent_rack(to_rack)
+        
+        if not source_rack:
+            logger.error(f"源试剂架 {from_rack} 不存在")
+            return False
+        
+        if not target_rack:
+            logger.error(f"目标试剂架 {to_rack} 不存在")
+            return False
+        
+        # 获取源试剂瓶
+        source_bottle = source_rack.get_bottle_by_position(from_row, from_col)
+        if not source_bottle:
+            logger.error(f"源位置 {from_rack}({from_row}, {from_col}) 没有试剂瓶")
+            return False
+        
+        # 检查源试剂瓶的ID是否与请求的ID匹配
+        if source_bottle._unilabos_state.reagent_id != reagent_id:
+            logger.error(f"源位置 {from_rack}({from_row}, {from_col}) 中的试剂瓶ID {source_bottle._unilabos_state.reagent_id} 与请求的ID {reagent_id} 不匹配")
+            return False
+        
+        # 检查目标位置是否为空
+        if target_rack.get_bottle_by_position(to_row, to_col):
+            logger.error(f"目标位置 {to_rack}({to_row}, {to_col}) 已被占用")
+            return False
+        
+        # 验证试剂瓶类别与目标试剂架类型是否匹配
+        reagent_category = source_bottle._unilabos_state.category
+        expected_rack_type = "reaction" if reagent_category == "reaction" else "post_process"
+        actual_rack_type = "reaction" if "reaction" in to_rack.lower() else "post_process"
+        
+        if expected_rack_type != actual_rack_type:
+            logger.error(f"试剂瓶类别 {reagent_category} 与目标试剂架类型不匹配，应使用 {expected_rack_type}_reagent_rack")
+            return False
+        
+        # 从源试剂架移除试剂瓶
+        removed_bottle = source_rack.remove_bottle(from_row, from_col)
+        if not removed_bottle:
+            logger.error(f"无法从源位置 {from_rack}({from_row}, {from_col}) 移除试剂瓶")
+            return False
+        
+        # 将试剂瓶添加到目标试剂架
+        success = target_rack.assign_bottle(removed_bottle, to_row, to_col)
+        if not success:
+            logger.error(f"无法将试剂瓶 {reagent_id} 添加到目标位置 {to_rack}({to_row}, {to_col})")
+            # 尝试将试剂瓶放回源位置
+            revert_success = source_rack.assign_bottle(removed_bottle, from_row, from_col)
+            if revert_success:
+                logger.info(f"已将试剂瓶 {reagent_id} 放回源位置 {from_rack}({from_row}, {from_col})")
+            else:
+                logger.error(f"无法将试剂瓶 {reagent_id} 放回源位置 {from_rack}({from_row}, {from_col})")
+            return False
+        
+        # 更新试剂瓶映射
+        self._reagent_bottles[reagent_id] = removed_bottle
+        
+        logger.info(f"试剂瓶 {reagent_id} 已成功从 {from_rack}({from_row}, {from_col}) 转移到 {to_rack}({to_row}, {to_col})")
+        
+        # 更新ROS资源
+        if hasattr(self, '_ros_node'):
+            ROS2WorkstationNode.run_async_func(self._ros_node.update_resource, True, **{
+                "resources": [self.deck]
+            })
+        
+        return True
+    def get_reagent_info(self, reagent_id: int) -> Optional[Dict[str, Any]]:
+        """
+        获取试剂信息
+        
+        Args:
+            reagent_id: 试剂编号
+            
+        Returns:
+            Optional[Dict[str, Any]]: 试剂信息字典，若不存在则返回None
+        """
+        # 直接从试剂瓶对象获取信息
+        reagent_bottle = self.get_reagent_bottle(reagent_id)
+        if reagent_bottle:
+            return reagent_bottle.serialize_state()
+        
+        # 如果没有找到试剂瓶对象，回退到使用设备状态
+        reagent_state = self._get_reagent_state(reagent_id)
+        if reagent_state:
+            return {
+                "reagent_id": reagent_state.reagent_id,
+                "name": reagent_state.name,
+                "volume": reagent_state.volume,
+                "max_volume": reagent_state.max_volume,
+                "concentration": reagent_state.concentration,
+                "category": reagent_state.category,
+                "status": reagent_state.status
+            }
+        return None
+    
+    def get_all_reagents_info(self) -> Dict[int, Dict[str, Any]]:
+        """
+        获取所有试剂信息
+        
+        Returns:
+            Dict[int, Dict[str, Any]]: 所有试剂信息字典
+        """
+        # 优先从试剂瓶对象获取信息
+        if self._reagent_bottles:
+            return {
+                reagent_id: reagent_bottle.serialize_state()
+                for reagent_id, reagent_bottle in self._reagent_bottles.items()
+            }
+        
+        # 如果没有试剂瓶对象，回退到使用设备状态
+        reagents_state = self._get_all_reagents_state()
+        return {
+            reagent_id: {
+                "reagent_id": reagent_state.reagent_id,
+                "name": reagent_state.name,
+                "volume": reagent_state.volume,
+                "max_volume": reagent_state.max_volume,
+                "concentration": reagent_state.concentration,
+                "category": reagent_state.category,
+                "status": reagent_state.status
+            }
+            for reagent_id, reagent_state in reagents_state.items()
+        }
 
     # ========== 移液操作指令集 ==========
     def reactor_solution_add(self, solution_id: int, volume: float, reactor_id: int, blocking: bool = False, timeout: float = None) -> bool:
@@ -650,8 +1148,11 @@ class ResinWorkstation(WorkstationBase):
         }
         return self._send_command("REACTOR_SOLUTION_ADD", params, blocking=blocking, timeout=timeout)
 
-    def post_process_solution_add(self, start_bottle: str, end_bottle: str, volume: float, 
-                                 inject_speed: float, suck_speed: float = 4.0, blocking: bool = False, timeout: float = None) -> bool:
+    def post_process_solution_add(
+        self, start_bottle: str, end_bottle: str, volume: float,
+        inject_speed: float, suck_speed: float = 4.0, blocking: bool = False,
+        timeout: float = None
+    ) -> bool:
         """
         后处理溶液转移
         

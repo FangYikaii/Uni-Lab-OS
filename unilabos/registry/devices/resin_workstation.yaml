@@ -49,30 +49,6 @@ resinworkstation_device:
           title: disconnect_device参数
           type: object
         type: UniLabJsonCommand
-      auto-post_init:
-        feedback: {}
-        goal: {}
-        goal_default:
-          ros_node: null
-        handles: {}
-        result: {}
-        schema:
-          description: ''
-          properties:
-            feedback: {}
-            goal:
-              properties:
-                ros_node:
-                  type: object
-              required:
-              - ros_node
-              type: object
-            result: {}
-          required:
-          - goal
-          title: post_init参数
-          type: object
-        type: UniLabJsonCommand
       auto-post_process_clean:
         feedback: {}
         goal: {}
@@ -438,6 +414,89 @@ resinworkstation_device:
           title: toggle_local_remote_control参数
           type: object
         type: UniLabJsonCommand
+      auto-transfer_reagent_bottle:
+        feedback: {}
+        goal: {}
+        goal_default:
+          from_col: null
+          from_rack: null
+          from_row: null
+          reagent_id: null
+          to_col: null
+          to_rack: null
+          to_row: null
+        handles: {}
+        result: {}
+        schema:
+          description: ''
+          properties:
+            feedback: {}
+            goal:
+              properties:
+                from_col:
+                  type: integer
+                from_rack:
+                  type: string
+                from_row:
+                  type: integer
+                reagent_id:
+                  type: integer
+                to_col:
+                  type: integer
+                to_rack:
+                  type: string
+                to_row:
+                  type: integer
+              required:
+              - reagent_id
+              - from_rack
+              - from_row
+              - from_col
+              - to_rack
+              - to_row
+              - to_col
+              type: object
+            result: {}
+          required:
+          - goal
+          title: transfer_reagent_bottle参数
+          type: object
+        type: UniLabJsonCommand
+      auto-update_reagent_volume:
+        feedback: {}
+        goal: {}
+        goal_default:
+          blocking: false
+          reagent_id: null
+          timeout: null
+          volume_change: null
+        handles: {}
+        result: {}
+        schema:
+          description: ''
+          properties:
+            feedback: {}
+            goal:
+              properties:
+                blocking:
+                  default: false
+                  type: boolean
+                reagent_id:
+                  type: integer
+                timeout:
+                  type: number
+                volume_change:
+                  type: number
+              required:
+              - reagent_id
+              - volume_change
+              type: object
+            result: {}
+          required:
+          - goal
+          title: update_reagent_volume参数
+          type: object
+        type: UniLabJsonCommand
       auto-update_state:
         feedback: {}
         goal: {}
@@ -495,8 +554,13 @@ resinworkstation_device:
         type: UniLabJsonCommand
     module: unilabos.devices.workstation.resin_workstation.resin_workstation:ResinWorkstation
     status_types:
+      all_reagents_info: dict
       device_status: dict
       latest_device_status: dict
+      reagent_bottle: String
+      reagent_bottle_by_position: String
+      reagent_info: String
+      reagent_rack: String
     type: python
   config_info: []
   description: ''
@@ -506,7 +570,7 @@ resinworkstation_device:
     config:
       properties:
         address:
-          default: 192.168.3.207
+          default: 127.0.0.1
           type: string
         config:
           type: object
@@ -522,11 +586,26 @@ resinworkstation_device:
       type: object
     data:
       properties:
+        all_reagents_info:
+          type: object
         device_status:
           type: object
         latest_device_status:
           type: object
+        reagent_bottle:
+          type: string
+        reagent_bottle_by_position:
+          type: string
+        reagent_info:
+          type: string
+        reagent_rack:
+          type: string
       required:
+      - reagent_bottle
+      - reagent_bottle_by_position
+      - reagent_rack
+      - reagent_info
+      - all_reagents_info
       - device_status
       - latest_device_status
       type: object

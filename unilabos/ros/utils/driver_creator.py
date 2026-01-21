@@ -239,7 +239,11 @@ class PyLabRobotCreator(DeviceClassCreator[T]):
 
             try:
                 from pylabrobot.resources import Resource
-
+                
+                # 确保数据包含必要的type字段
+                if "type" not in processed_data and "_resource_type" in data:
+                    processed_data["type"] = data["_resource_type"]
+                
                 self.device_instance: Resource = deserialize_method(**processed_data)
                 self.resource_tracker.loop_set_uuid(self.device_instance, name_to_uuid)
                 all_states = self.device_instance.serialize_all_state()
@@ -270,8 +274,21 @@ class PyLabRobotCreator(DeviceClassCreator[T]):
                         arg_value = spec_args[param_name].annotation
                         data[param_name]["_resource_type"] = self.device_cls.__module__ + ":" + arg_value
                         logger.debug(f"自动补充 _resource_type: {data[param_name]['_resource_type']}")
+                
+                # 处理资源引用
                 processed_data = self._process_resource_references(data, to_dict=False, name_to_uuid=name_to_uuid)
-                self.device_instance = super(PyLabRobotCreator, self).create_instance(processed_data)  # 补全变量后直接调用，调用的自身的attach_resource
+                
+                # 过滤掉Deck.__init__不支持的参数
+                init_params = {}
+                for param_name, param_value in processed_data.items():
+                    if param_name in spec_args or param_name in ["name", "size_x", "size_y", "size_z", "origin", "category"]:
+                        init_params[param_name] = param_value
+                
+                # 如果处理后的数据为空，使用默认参数创建
+                if not init_params and hasattr(self.device_cls, "__name__") and self.device_cls.__name__ == "Deck":
+                    self.device_instance = self.device_cls()
+                else:
+                    self.device_instance = super(PyLabRobotCreator, self).create_instance(init_params)  # 补全变量后直接调用，调用的自身的attach_resource
             except Exception as e:
                 logger.error(f"PyLabRobot创建实例失败: {e}")
                 logger.error(f"PyLabRobot创建实例堆栈: {traceback.format_exc()}")
@@ -349,8 +366,11 @@ class WorkstationNodeCreator(DeviceClassCreator[T]):
             if deck_dict:
                 from pylabrobot.resources import Deck, Resource
 
+                # 处理deck配置，提取data字段（如果存在）
+                actual_deck_config = deck_dict.get("data", deck_dict)
+                
                 plrc = PyLabRobotCreator(Deck, self.children, self.resource_tracker)
-                deck = plrc.create_instance(deck_dict)
+                deck = plrc.create_instance(actual_deck_config)
                 data["deck"] = deck
             else:
                 data["deck"] = None
@@ -358,6 +378,4 @@ class WorkstationNodeCreator(DeviceClassCreator[T]):
             self.post_create()
             return self.device_instance
         except Exception as e:
-            logger.error(f"WorkstationNode创建实例失败: {e}")
-            logger.error(f"WorkstationNode创建实例堆栈: {traceback.format_exc()}")
-            raise
+            logger.error(f"WorkstationNo

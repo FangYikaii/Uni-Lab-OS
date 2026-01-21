@@ -1,0 +1,310 @@
+{
+  "nodes": [
+    {
+      "id": "resin_workstation",
+      "name": "树脂工作站",
+      "children": ["resin_workstation_deck"],
+      "type": "device",
+      "class": "resin_workstation",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "config": {
+        "type": "ResinWorkstation",
+        "debug_mode": false,
+        "protocol_type": [],
+        "deck": {
+          "data": {
+            "_resource_child_name": "resin_workstation_deck",
+            "_resource_type": "unilabos.devices.workstation.resin_workstation.resin_workstation:ResinWorkstationDeck"
+          }
+        },
+        "address": "192.168.3.207",
+        "port": 8889
+      },
+      "data": {}
+    },
+    {
+      "id": "resin_workstation_deck",
+      "name": "树脂工作站台面",
+      "children": ["reaction_reagent_rack", "post_process_reagent_rack"],
+      "type": "container",
+      "class": "",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "config": {
+        "type": "ResinWorkstationDeck",
+        "size_x": 1620.0,
+        "size_y": 1270.0,
+        "size_z": 500.0
+      },
+      "data": {}
+    },
+    {
+      "id": "reaction_reagent_rack",
+      "name": "反应试剂架",
+      "children": ["reaction_reagent_1", "reaction_reagent_2", "reaction_reagent_3", "reaction_reagent_4", "reaction_reagent_5"],
+      "parent": "resin_workstation_deck",
+      "type": "container",
+      "class": "",
+      "position": {
+        "x": 100,
+        "y": 100,
+        "z": 0
+      },
+      "config": {
+        "type": "ReagentRack",
+        "size_x": 210.0,
+        "size_y": 140.0,
+        "size_z": 100.0,
+        "num_rows": 3,
+        "num_cols": 4
+      },
+      "data": {}
+    },
+    {
+      "id": "reaction_reagent_1",
+      "name": "引发剂",
+      "parent": "reaction_reagent_rack",
+      "type": "container",
+      "class": "",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "config": {
+        "type": "ReagentBottle",
+        "size_x": 80.0,
+        "size_y": 80.0,
+        "size_z": 150.0
+      },
+      "data": {
+        "reagent_id": 1,
+        "name": "引发剂",
+        "volume": 100.0,
+        "max_volume": 100.0,
+        "concentration": "100%",
+        "category": "reaction",
+        "status": "available"
+      }
+    },
+    {
+      "id": "reaction_reagent_2",
+      "name": "氨水",
+      "parent": "reaction_reagent_rack",
+      "type": "container",
+      "class": "",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "config": {
+        "type": "ReagentBottle",
+        "size_x": 80.0,
+        "size_y": 80.0,
+        "size_z": 150.0
+      },
+      "data": {
+        "reagent_id": 2,
+        "name": "氨水",
+        "volume": 100.0,
+        "max_volume": 100.0,
+        "concentration": "25%",
+        "category": "reaction",
+        "status": "available"
+      }
+    },
+    {
+      "id": "reaction_reagent_3",
+      "name": "二氧六环",
+      "parent": "reaction_reagent_rack",
+      "type": "container",
+      "class": "",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "config": {
+        "type": "ReagentBottle",
+        "size_x": 100.0,
+        "size_y": 100.0,
+        "size_z": 200.0
+      },
+      "data": {
+        "reagent_id": 3,
+        "name": "二氧六环",
+        "volume": 500.0,
+        "max_volume": 500.0,
+        "concentration": "100%",
+        "category": "reaction",
+        "status": "available"
+      }
+    },
+    {
+      "id": "reaction_reagent_4",
+      "name": "甲醇",
+      "parent": "reaction_reagent_rack",
+      "type": "container",
+      "class": "",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "config": {
+        "type": "ReagentBottle",
+        "size_x": 80.0,
+        "size_y": 80.0,
+        "size_z": 150.0
+      },
+      "data": {
+        "reagent_id": 4,
+        "name": "甲醇",
+        "volume": 250.0,
+        "max_volume": 250.0,
+        "concentration": "100%",
+        "category": "reaction",
+        "status": "available"
+      }
+    },
+    {
+      "id": "reaction_reagent_5",
+      "name": "稀盐酸",
+      "parent": "reaction_reagent_rack",
+      "type": "container",
+      "class": "",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "config": {
+        "type": "ReagentBottle",
+        "size_x": 100.0,
+        "size_y": 100.0,
+        "size_z": 200.0
+      },
+      "data": {
+        "reagent_id": 5,
+        "name": "稀盐酸",
+        "volume": 500.0,
+        "max_volume": 500.0,
+        "concentration": "10%",
+        "category": "reaction",
+        "status": "available"
+      }
+    },
+    {
+      "id": "post_process_reagent_rack",
+      "name": "后处理试剂架",
+      "children": ["post_process_reagent_1", "post_process_reagent_2", "post_process_reagent_3"],
+      "parent": "resin_workstation_deck",
+      "type": "container",
+      "class": "",
+      "position": {
+        "x": 400,
+        "y": 100,
+        "z": 0
+      },
+      "config": {
+        "type": "ReagentRack",
+        "size_x": 210.0,
+        "size_y": 140.0,
+        "size_z": 100.0,
+        "num_rows": 3,
+        "num_cols": 4
+      },
+      "data": {}
+    },
+    {
+      "id": "post_process_reagent_1",
+      "name": "纯水",
+      "parent": "post_process_reagent_rack",
+      "type": "container",
+      "class": "",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "config": {
+        "type": "ReagentBottle",
+        "size_x": 150.0,
+        "size_y": 150.0,
+        "size_z": 250.0
+      },
+      "data": {
+        "reagent_id": 6,
+        "name": "纯水",
+        "volume": 10000.0,
+        "max_volume": 10000.0,
+        "concentration": "100%",
+        "category": "post_process",
+        "status": "available"
+      }
+    },
+    {
+      "id": "post_process_reagent_2",
+      "name": "二氧六环溶剂",
+      "parent": "post_process_reagent_rack",
+      "type": "container",
+      "class": "",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "config": {
+        "type": "ReagentBottle",
+        "size_x": 150.0,
+        "size_y": 150.0,
+        "size_z": 250.0
+      },
+      "data": {
+        "reagent_id": 7,
+        "name": "二氧六环溶剂",
+        "volume": 10000.0,
+        "max_volume": 10000.0,
+        "concentration": "100%",
+        "category": "post_process",
+        "status": "available"
+      }
+    },
+    {
+      "id": "post_process_reagent_3",
+      "name": "前处理反应液",
+      "parent": "post_process_reagent_rack",
+      "type": "container",
+      "class": "",
+      "position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "config": {
+        "type": "ReagentBottle",
+        "size_x": 80.0,
+        "size_y": 80.0,
+        "size_z": 150.0
+      },
+      "data": {
+        "reagent_id": 8,
+        "name": "前处理反应液",
+        "volume": 220.0,
+        "max_volume": 220.0,
+        "concentration": "100%",
+        "category": "post_process",
+        "status": "available"
+      }
+    }
+  ],
+  "links": []
+}
