@@ -53,48 +53,82 @@ def main():
     address = "192.168.3.207"
     port = 8889
     
-    # 创建ResinWorkstation实例
+    # 创建ResinWorkstation实例（正常模式）
     print("\n1. 初始化测试...")
     workstation = ResinWorkstation(
         address=address,
         port=port,
-        debug_mode=True
+        debug_mode=False
     )
     
     test_results = []
     
     # 测试初始化
-    test_results.append(print_test_result("初始化ResinWorkstation", True))
-    test_results.append(print_test_result("检查初始连接状态", not workstation.connected))
+    test_results.append(print_test_result("初始化ResinWorkstation（正常模式）", True))
     test_results.append(print_test_result("检查初始操作模式", workstation.operation_mode == "local"))
-        
+    
+    # 创建ResinWorkstation实例（调试模式）
+    print("\n1.1 调试模式测试...")
+    debug_workstation = ResinWorkstation(
+        address=address,
+        port=port,
+        debug_mode=True
+    )
+    test_results.append(print_test_result("初始化ResinWorkstation（调试模式）", True))
+    
+    # 测试调试模式下的设备状态
+    if should_continue_test("测试调试模式设备状态"):
+        debug_status = debug_workstation.device_status
+        test_results.append(print_test_result("调试模式设备状态", debug_status is not None))
+        if debug_status:
+            print(f"   调试模式连接状态: {debug_status.get('connected', False)}")
+            print(f"   调试模式设备状态: {debug_status.get('status', '未知')}")
+            test_results.append(print_test_result("调试模式强制连接状态", debug_status.get('connected', False) == True))
+    
+    # 测试设备连接
+    print("\n2. 设备连接测试...")
+    if should_continue_test("测试设备连接"):
+        connect_result = workstation.connected
+        test_results.append(print_test_result("设备连接状态", connect_result))
+    
+    # 测试设备状态查询
+    print("\n3. 设备状态测试...")
+    if should_continue_test("获取设备状态（缓存）"):
+        status = workstation.device_status
+        test_results.append(print_test_result("获取设备状态（缓存）", status is not None))
+        if status:
+            print(f"   设备状态: {status.get('status', '未知')}")
+            print(f"   连接状态: {status.get('connected', False)}")
+            print(f"   操作模式: {status.get('operation_mode', '未知')}")
+    
+    if should_continue_test("获取最新设备状态"):
+        latest_status = workstation.get_latest_device_status()
+        test_results.append(print_test_result("获取最新设备状态", latest_status is not None))
+        if latest_status:
+            print(f"   最新设备状态: {latest_status.get('status', '未知')}")
+            print(f"   最新连接状态: {latest_status.get('connected', False)}")
+    
     # 获取反应器状态
-    print("\n3. 反应器状态测试...")
+    print("\n4. 反应器状态测试...")
     if should_continue_test("获取反应器状态"):
         reactor_status = workstation._get_reactor_state(reactor_id=1)
         test_results.append(print_test_result("获取反应器状态", reactor_status is not None))
         if reactor_status:
             print(f"   反应器1温度: {reactor_status.current_temperature}°C")
             print(f"   反应器1搅拌状态: {'运行中' if reactor_status.stirring_status else '已停止'}")
+            print(f"   反应器1氮气状态: {'开启' if reactor_status.n2_status else '关闭'}")
+            print(f"   反应器1空气状态: {'开启' if reactor_status.air_status else '关闭'}")
     
     # 获取后处理状态
-    print("\n4. 后处理状态测试...")
+    print("\n5. 后处理状态测试...")
     if should_continue_test("获取后处理状态"):
         post_process_status = workstation._get_post_process_state(post_process_id=1)
         test_results.append(print_test_result("获取后处理状态", post_process_status is not None))
         if post_process_status:
             print(f"   后处理1状态: {post_process_status.status}")
             print(f"   后处理1清洗状态: {'清洗中' if post_process_status.cleaning_status else '未清洗'}")
-
-    # 测试设备状态查询
-    print("\n5. 设备状态测试...")
-    if should_continue_test("获取设备状态"):
-        status = workstation.device_status
-        test_results.append(print_test_result("获取设备状态", status is not None))
-        if status:
-            print(f"   设备状态: {status.get('status', '未知')}")
-            print(f"   连接状态: {status.get('connected', False)}")
-            print(f"   操作模式: {status.get('operation_mode', '未知')}")
+            print(f"   后处理1排液状态: {'开启' if post_process_status.discharge_status else '关闭'}")
+            print(f"   后处理1转移状态: {'转移中' if post_process_status.transferring_status else '未转移'}")
     
     # 测试切换本地/远程控制模式
     print("\n6. 控制模式切换测试...")
@@ -114,16 +148,6 @@ def main():
     # 测试反应器操作测试
     print("\n7. 反应器操作测试...")
     
-    # 测试反应器溶液添加
-    if workstation.connected: 
-        if should_continue_test("反应器添加溶液"):
-            solution_add_result = workstation.reactor_solution_add(
-                solution_id=1,
-                volume=10.0,
-                reactor_id=1
-            )
-            test_results.append(print_test_result("反应器添加溶液", solution_add_result))
-        
     # 测试氮气控制
     if workstation.connected and should_continue_test("打开氮气"):
         n2_on_result = workstation.reactor_n2_on(reactor_id=1)
@@ -156,24 +180,61 @@ def main():
         stop_stir_result = workstation.stop_reactor_stirrer(reactor_id=1)
         test_results.append(print_test_result("停止搅拌器", stop_stir_result))
     
+    # 测试反应器溶液添加（非阻塞模式）
+    if workstation.connected: 
+        if should_continue_test("反应器添加溶液（非阻塞）"):
+            solution_add_result = workstation.reactor_solution_add(
+                solution_id=1,
+                volume=10.0,
+                reactor_id=1,
+                blocking=False
+            )
+            test_results.append(print_test_result("反应器添加溶液（非阻塞）", solution_add_result))
+    
+    # 测试反应器溶液添加（阻塞模式）
+    if workstation.connected: 
+        if should_continue_test("反应器添加溶液（阻塞）"):
+            solution_add_result = workstation.reactor_solution_add(
+                solution_id=1,
+                volume=5.0,
+                reactor_id=1,
+                blocking=True,
+                timeout=30
+            )
+            test_results.append(print_test_result("反应器添加溶液（阻塞）", solution_add_result))
+    
     # 测试后处理系统
     print("\n8. 后处理系统测试...")
     
-    # 后处理溶液转移
-    if workstation.connected and should_continue_test("后处理溶液转移"):
+    # 后处理溶液转移（非阻塞模式）
+    if workstation.connected and should_continue_test("后处理溶液转移（非阻塞）"):
         transfer_result = workstation.post_process_solution_add(
             start_bottle="bottle1",
             end_bottle="bottle2",
             volume=5.0,
             inject_speed=2.0,
-            suck_speed=3.0
+            suck_speed=3.0,
+            blocking=False
         )
-        test_results.append(print_test_result("后处理溶液转移", transfer_result))
+        test_results.append(print_test_result("后处理溶液转移（非阻塞）", transfer_result))
     
-    # 后处理清洗
-    if workstation.connected and should_continue_test("后处理清洗"):
-        clean_result = workstation.post_process_clean(post_process_id=1)
-        test_results.append(print_test_result("后处理清洗", clean_result))
+    # 后处理溶液转移（阻塞模式）
+    if workstation.connected and should_continue_test("后处理溶液转移（阻塞）"):
+        transfer_result = workstation.post_process_solution_add(
+            start_bottle="bottle1",
+            end_bottle="bottle2",
+            volume=3.0,
+            inject_speed=2.0,
+            suck_speed=3.0,
+            blocking=True,
+            timeout=30
+        )
+        test_results.append(print_test_result("后处理溶液转移（阻塞）", transfer_result))
+    
+    # 后处理清洗（非阻塞模式）
+    if workstation.connected and should_continue_test("后处理清洗（非阻塞）"):
+        clean_result = workstation.post_process_clean(post_process_id=1, blocking=False)
+        test_results.append(print_test_result("后处理清洗（非阻塞）", clean_result))
     
     # 后处理排液控制
     if workstation.connected and should_continue_test("打开后处理排液"):
@@ -186,9 +247,13 @@ def main():
     
     # 测试等待功能
     print("\n9. 等待功能测试...")
-    if workstation.connected and should_continue_test("等待1秒"):
-        wait_result = workstation.wait(seconds=1)
-        test_results.append(print_test_result("等待1秒", wait_result))
+    if workstation.connected and should_continue_test("等待1秒（非阻塞）"):
+        wait_result = workstation.wait(seconds=1, blocking=False)
+        test_results.append(print_test_result("等待1秒（非阻塞）", wait_result))
+    
+    if workstation.connected and should_continue_test("等待1秒（阻塞）"):
+        wait_result = workstation.wait(seconds=1, blocking=True, timeout=5)
+        test_results.append(print_test_result("等待1秒（阻塞）", wait_result))
     
     # 测试设备断开连接
     print("\n10. 设备断开测试...")

@@ -250,7 +250,6 @@ class UDPClient:
                 # 发送命令
                 data = cmd_str.encode('utf-8')
                 self.socket.sendto(data, (self.address, self.port))
-                print(f"发送UDP命令: {cmd_str}, 目标地址: {self.address}:{self.port}")
                 logger.debug(f"发送UDP命令: {cmd_str}")
                 
                 # 根据命令类型决定是否等待响应
@@ -394,8 +393,8 @@ class ResinWorkstation(WorkstationBase):
         Returns:
             bool: 断开成功返回True，否则返回False
         """
-        success = not self.udp_client.disconnect()
-        self.connected = not success
+        success = self.udp_client.disconnect()
+        self.connected = False  # 断开连接后，connected状态应该为False
         
         # 更新设备状态
         self._device_state.connected = False
@@ -604,36 +603,27 @@ class ResinWorkstation(WorkstationBase):
             # 更新设备状态
             self._get_device_state()
             
-            # 检查设备状态，判断命令是否完成
-            # 根据设备状态判断命令是否完成
-            device_status = self.device_status
+            # 检查设备整体状态
+            if self._device_state.device_status == "error":
+                logger.error(f"设备出错: {self._device_state.error_message}")
+                return False
             
             # 检查反应器状态
             if command == "REACTOR_SOLUTION_ADD":
                 reactor_id = params.get("reactor_id")
                 if reactor_id is not None:
-                    reactor_state = device_status.get("reactors", {}).get(str(reactor_id), {})
-                    if reactor_state.get("status") == "idle":
-                        # 反应器状态为idle，命令可能已完成
+                    reactor_state = self._device_state.reactors.get(reactor_id)
+                    if reactor_state and reactor_state.status == "idle" and self._device_state.solution_add_status == "idle":
+                        # 反应器状态为idle且溶液添加状态为idle，命令已完成
                         return True
             
             # 检查后处理系统状态
             elif command in ["POST_PROCESS_SOLUTION_ADD", "POST_PROCESS_CLEAN"]:
-                post_process_state = device_status.get("post_processes", {}).get(str(params.get("post_process_id", 1)), {})
-                if post_process_state.get("status") == "idle":
-                    # 后处理系统状态为idle，命令可能已完成
+                post_process_id = params.get("post_process_id", 1)
+                post_process_state = self._device_state.post_processes.get(post_process_id)
+                if post_process_state and post_process_state.status == "idle":
+                    # 后处理系统状态为idle，命令已完成
                     return True
-            
-            # 检查溶液添加状态
-            elif command == "REACTOR_SOLUTION_ADD":
-                if device_status.get("solution_add_status") == "idle":
-                    # 溶液添加状态为idle，命令可能已完成
-                    return True
-            
-            # 检查设备整体状态
-            if device_status.get("device_status") == "error":
-                logger.error(f"设备出错: {device_status.get('error_message')}")
-                return False
             
             # 短暂休眠，避免频繁查询
             time.sleep(1.0)
@@ -870,14 +860,11 @@ class ResinWorkstation(WorkstationBase):
     @property
     def device_status(self) -> Dict[str, Any]:
         """
-        获取设备状态
+        获取设备状态（返回缓存的状态，不主动查询设备）
         
         Returns:
             Dict[str, Any]: 设备状态信息
         """
-        # 获取最新设备状态
-        self._get_device_state()
-        
         # 将DeviceState对象转换为字典
         status_dict = asdict(self._device_state)
         
@@ -898,3 +885,14 @@ class ResinWorkstation(WorkstationBase):
             status_dict["connected"] = self.connected
         
         return status_dict
+    
+    def get_latest_device_status(self) -> Dict[str, Any]:
+        """
+        获取最新设备状态（主动查询设备）
+        
+        Returns:
+            Dict[str, Any]: 最新设备状态信息
+        """
+        # 获取最新设备状态
+        self._get_device_state()
+        return self.device_status

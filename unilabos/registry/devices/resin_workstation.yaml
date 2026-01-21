@@ -496,6 +496,7 @@ resinworkstation_device:
     module: unilabos.devices.workstation.resin_workstation.resin_workstation:ResinWorkstation
     status_types:
       device_status: dict
+      latest_device_status: dict
     type: python
   config_info: []
   description: ''
@@ -523,8 +524,11 @@ resinworkstation_device:
       properties:
         device_status:
           type: object
+        latest_device_status:
+          type: object
       required:
       - device_status
+      - latest_device_status
       type: object
   registry_type: device
   version: 1.0.0
