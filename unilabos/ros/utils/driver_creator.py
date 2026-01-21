@@ -378,4 +378,6 @@ class WorkstationNodeCreator(DeviceClassCreator[T]):
             self.post_create()
             return self.device_instance
         except Exception as e:
-            logger.error(f"WorkstationNo
+            logger.error(f"WorkstationNode创建实例失败: {e}")
+            logger.error(f"WorkstationNode创建实例堆栈: {traceback.format_exc()}")
+            raise
